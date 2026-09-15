@@ -32,31 +32,47 @@ Crie um repositório vazio no GitHub e siga as instruções dele para
    - `FRAGELLA_API_KEY` = a chave que você pegou no passo 1.
 4. Clique em **Deploy**.
 
-### 4. Conecte um banco de dados (para os dados persistirem)
-1. No projeto já criado na Vercel, vá na aba **Storage**.
-2. Clique em **Create Database** → escolha **Redis** (via Upstash, no
-   Marketplace da Vercel) → plano gratuito.
-3. Conecte esse banco ao seu projeto — a Vercel injeta automaticamente as
-   variáveis `UPSTASH_REDIS_REST_URL` e `UPSTASH_REDIS_REST_TOKEN` (ou, em
-   algumas contas, `KV_REST_API_URL`/`KV_REST_API_TOKEN` — o código aceita
-   qualquer um dos dois pares).
-4. Vá em **Deployments** → nos três pontinhos do último deploy → **Redeploy**,
+### 4. Crie o banco de dados no Supabase
+1. Acesse https://supabase.com, crie uma conta gratuita e um novo projeto
+   (escolha uma senha de banco qualquer — não é usada por este app).
+2. No projeto, vá em **SQL Editor** → **New query**, cole o conteúdo de
+   [`supabase/schema.sql`](supabase/schema.sql) e clique em **Run**. Isso cria
+   a tabela `perfumes`.
+3. Vá em **Project Settings → API**. Copie:
+   - **Project URL** → variável `SUPABASE_URL`
+   - **service_role key** (em "Project API keys", não a `anon`/`public`!) →
+     variável `SUPABASE_SERVICE_ROLE_KEY`
+
+### 5. Configure as variáveis na Vercel e refaça o deploy
+1. No projeto da Vercel, vá em **Settings → Environment Variables** e adicione
+   `SUPABASE_URL` e `SUPABASE_SERVICE_ROLE_KEY` com os valores do passo 4.
+2. Vá em **Deployments** → nos três pontinhos do último deploy → **Redeploy**,
    para a aplicação pegar as novas variáveis de ambiente.
 
 Pronto — seu link (algo como `https://diario-olfativo.vercel.app`) já estará
 no ar, com o banco de dados funcionando e a busca automática pela Fragella
-ativa.
+ativa. Na primeira vez que a página carregar, os 25 perfumes de
+`data/seed.json` são inseridos automaticamente na tabela.
 
 ## Rodando localmente (opcional)
 
 ```bash
 npm install
-cp .env.local.example .env.local   # preencha FRAGELLA_API_KEY
+cp .env.local.example .env.local   # preencha as três variáveis
 npm run dev
 ```
-Sem as variáveis do Redis configuradas, o app funciona só leitura, mostrando
-os 25 perfumes de `data/seed.json` (não é possível salvar sem um banco
-conectado).
+Sem `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY` configuradas, o app funciona só
+leitura, mostrando os 25 perfumes de `data/seed.json` (não é possível salvar
+sem um banco conectado).
+
+## Segurança do Supabase
+
+A tabela `perfumes` fica com Row Level Security (RLS) ligado e sem nenhuma
+política — ou seja, a chave pública (`anon`) não consegue ler nem escrever
+nada nela. Só a `service_role key` acessa os dados, e ela só é usada dentro
+das rotas de API (`app/api/...`), que rodam no servidor — o navegador nunca
+vê essa chave. Por isso é essencial nunca colar a `service_role key` numa
+variável com prefixo `NEXT_PUBLIC_`, nem no código do frontend.
 
 ## Sobre a integração com a Fragella
 

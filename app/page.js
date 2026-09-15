@@ -19,6 +19,7 @@ export default function Page() {
   const [perfumes, setPerfumes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
+  const [readOnly, setReadOnly] = useState(false);
 
   const [search, setSearch] = useState("");
   const [filterFamily, setFilterFamily] = useState("");
@@ -34,7 +35,10 @@ export default function Page() {
       .then((data) => {
         if (cancelled) return;
         if (data.error) setLoadError(data.error);
-        else setPerfumes(data.perfumes || []);
+        else {
+          setPerfumes(data.perfumes || []);
+          setReadOnly(Boolean(data.readOnly));
+        }
       })
       .catch((err) => {
         if (!cancelled) setLoadError(String(err));
@@ -165,6 +169,12 @@ export default function Page() {
       </div>
 
       {loadError && <div className="hint" style={{ borderColor: "var(--danger)" }}>Erro ao carregar: {loadError}</div>}
+      {readOnly && (
+        <div className="hint" style={{ borderColor: "var(--gold)" }}>
+          <b>Banco de dados ainda não conectado.</b> Você está vendo os dados de exemplo, mas nada será
+          salvo até que o Supabase seja configurado nas variáveis de ambiente do servidor.
+        </div>
+      )}
 
       <div className="controls">
         <input

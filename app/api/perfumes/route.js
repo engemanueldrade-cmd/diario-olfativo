@@ -1,18 +1,6 @@
 import { NextResponse } from "next/server";
-import { redis } from "@/lib/db";
+import { supabase, rowToPerfume, perfumeToRow } from "@/lib/db";
 import seed from "@/data/seed.json";
-
-const KEY = "perfumes";
-
-async function getAll() {
-  if (!redis) return seed;
-  const data = await redis.get(KEY);
-  if (data == null) {
-    await redis.set(KEY, seed);
-    return seed;
-  }
-  return data;
-}
 
 function slugify(s) {
   return (
@@ -36,15 +24,35 @@ function uniqueId(base, existingIds) {
   return candidate;
 }
 
+async function seedIfEmpty() {
+  const { count, error } = await supabase.from("perfumes").select("id", { count: "exact", head: true });
+  if (error) throw error;
+  if (count === 0) {
+    const rows = seed.map(perfumeToRow);
+    const { error: insertError } = await supabase.from("perfumes").insert(rows);
+    if (insertError) throw insertError;
+  }
+}
+
 export async function GET() {
-  const perfumes = await getAll();
-  return NextResponse.json({ perfumes });
+  if (!supabase) {
+    // Sem banco conectado ainda: mostra os dados de exemplo, mas avisa que não vai salvar.
+    return NextResponse.json({ perfumes: seed, readOnly: true });
+  }
+  try {
+    await seedIfEmpty();
+    const { data, error } = await supabase.from("perfumes").select("*").order("created_at", { ascending: true });
+    if (error) throw error;
+    return NextResponse.json({ perfumes: data.map(rowToPerfume) });
+  } catch (err) {
+    return NextResponse.json({ error: String(err.message || err) }, { status: 500 });
+  }
 }
 
 export async function POST(request) {
-  if (!redis) {
+  if (!supabase) {
     return NextResponse.json(
-      { error: "Banco de dados não configurado (variáveis de ambiente do Redis ausentes)." },
+      { error: "Banco de dados não configurado (SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY ausentes)." },
       { status: 500 }
     );
   }
@@ -58,25 +66,35 @@ export async function POST(request) {
     return NextResponse.json({ error: "O nome do perfume é obrigatório" }, { status: 400 });
   }
 
-  const perfumes = await getAll();
   const now = Date.now();
-  let record;
 
-  if (body.id) {
-    const idx = perfumes.findIndex((p) => p.id === body.id);
-    if (idx === -1) {
-      return NextResponse.json({ error: "Perfume não encontrado" }, { status: 404 });
+  try {
+    if (body.id) {
+      const { data: existingRows, error: fetchError } = await supabase
+        .from("perfumes")
+        .select("id")
+        .eq("id", body.id)
+        .limit(1);
+      if (fetchError) throw fetchError;
+      if (!existingRows || existingRows.length === 0) {
+        return NextResponse.json({ error: "Perfume não encontrado" }, { status: 404 });
+      }
+      const row = perfumeToRow({ ...body, updatedAt: now });
+      const { data, error } = await supabase.from("perfumes").update(row).eq("id", body.id).select().single();
+      if (error) throw error;
+      return NextResponse.json({ perfume: rowToPerfume(data) });
     }
-    record = { ...perfumes[idx], ...body, updatedAt: now };
-    perfumes[idx] = record;
-  } else {
-    const base = slugify(`${body.name}-${body.brand || ""}`);
-    const existingIds = new Set(perfumes.map((p) => p.id));
-    const id = uniqueId(base, existingIds);
-    record = { ...body, id, createdAt: now, updatedAt: now };
-    perfumes.push(record);
-  }
 
-  await redis.set(KEY, perfumes);
-  return NextResponse.json({ perfume: record });
+    const { data: allIds, error: idsError } = await supabase.from("perfumes").select("id");
+    if (idsError) throw idsError;
+    const existingIds = new Set((allIds || []).map((r) => r.id));
+    const id = uniqueId(slugify(`${body.name}-${body.brand || ""}`), existingIds);
+
+    const row = perfumeToRow({ ...body, id, createdAt: now, updatedAt: now });
+    const { data, error } = await supabase.from("perfumes").insert(row).select().single();
+    if (error) throw error;
+    return NextResponse.json({ perfume: rowToPerfume(data) });
+  } catch (err) {
+    return NextResponse.json({ error: String(err.message || err) }, { status: 500 });
+  }
 }
