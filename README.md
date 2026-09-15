@@ -43,27 +43,44 @@ Crie um repositório vazio no GitHub e siga as instruções dele para
    - **service_role key** (em "Project API keys", não a `anon`/`public`!) →
      variável `SUPABASE_SERVICE_ROLE_KEY`
 
-### 5. Configure as variáveis na Vercel e refaça o deploy
+### 5. Proteja o site com senha
+Sem isso, qualquer pessoa com o link consegue ver, adicionar e apagar
+perfumes. Escolha uma senha só sua e adicione nas Environment Variables da
+Vercel:
+- `SITE_PASSWORD` = a senha que você escolher.
+
+### 6. Configure as variáveis na Vercel e refaça o deploy
 1. No projeto da Vercel, vá em **Settings → Environment Variables** e adicione
-   `SUPABASE_URL` e `SUPABASE_SERVICE_ROLE_KEY` com os valores do passo 4.
+   `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` e `SITE_PASSWORD`.
 2. Vá em **Deployments** → nos três pontinhos do último deploy → **Redeploy**,
    para a aplicação pegar as novas variáveis de ambiente.
 
 Pronto — seu link (algo como `https://diario-olfativo.vercel.app`) já estará
-no ar, com o banco de dados funcionando e a busca automática pela Fragella
-ativa. Na primeira vez que a página carregar, os 25 perfumes de
+no ar, pedindo login, com o banco de dados funcionando e a busca automática
+pela Fragella ativa. Na primeira vez que a página carregar, os 25 perfumes de
 `data/seed.json` são inseridos automaticamente na tabela.
+
+### Atualizando um banco Supabase já existente
+Se você já tinha criado a tabela antes de estes recursos existirem (fotos,
+volume/clima/ocasião/alertas, contador de uso da Fragella), é só rodar de
+novo o [`supabase/schema.sql`](supabase/schema.sql) no SQL Editor — ele usa
+`if not exists` em tudo, então só acrescenta o que falta, sem apagar nada.
+
+### Instalar no celular (PWA)
+No Chrome (Android) ou Safari (iPhone), abra o link do site e use "Adicionar
+à tela de início" (ou o ícone de instalação que aparece na barra de
+endereço) — o app abre em tela cheia, com ícone próprio, como um app nativo.
 
 ## Rodando localmente (opcional)
 
 ```bash
 npm install
-cp .env.local.example .env.local   # preencha as três variáveis
+cp .env.local.example .env.local   # preencha as variáveis
 npm run dev
 ```
 Sem `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY` configuradas, o app funciona só
 leitura, mostrando os 25 perfumes de `data/seed.json` (não é possível salvar
-sem um banco conectado).
+sem um banco conectado). Sem `SITE_PASSWORD`, o site roda sem pedir login.
 
 ## Segurança do Supabase
 
@@ -76,9 +93,14 @@ variável com prefixo `NEXT_PUBLIC_`, nem no código do frontend.
 
 ## Sobre a integração com a Fragella
 
-O mapeamento dos campos da resposta da Fragella (em `app/api/search/route.js`,
-função `normalize`) foi feito a partir da documentação pública deles, sem uma
-chave de API real para testar contra o serviço ao vivo. Os nomes dos campos
-podem variar ligeiramente na prática — se a busca voltar vazia ou com campos
-faltando depois que você tiver sua chave de verdade, me mostre a resposta
-bruta (posso adicionar um log temporário) e eu ajusto o mapeamento rapidinho.
+Testada com uma chave real em produção — funcionando. O contador de cota
+mensal (`api_usage` no Supabase) evita surpresas com o limite do plano free
+(20 buscas/mês); ajuste `FRAGELLA_MONTHLY_LIMIT` se você tiver um plano pago.
+
+## Segurança do login
+
+A senha (`SITE_PASSWORD`) protege o site inteiro via `middleware.js`: sem um
+cookie de sessão válido, toda página e toda rota de API redirecionam para
+`/login` (ou retornam 401, no caso das APIs). O cookie é assinado com HMAC
+usando a própria senha como chave — não guarda nada em banco, dura 30 dias,
+e é `httpOnly` (não pode ser lido por JavaScript no navegador).

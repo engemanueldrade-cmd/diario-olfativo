@@ -266,6 +266,80 @@ button {
   align-items: flex-start;
 }
 
+.card-thumb {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  object-fit: cover;
+  background: var(--paper-3);
+}
+
+.card-thumb.placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.1rem;
+  color: var(--ink-soft);
+}
+
+.detail-image-wrap {
+  display: flex;
+  justify-content: center;
+  margin: 10px 0;
+}
+
+.detail-image {
+  max-height: 220px;
+  width: auto;
+  max-width: 100%;
+  border-radius: 12px;
+  background: var(--paper-3);
+  object-fit: contain;
+}
+
+.form-image-preview {
+  max-height: 120px;
+  width: auto;
+  border-radius: 10px;
+  margin-top: 6px;
+  background: var(--paper-3);
+  object-fit: contain;
+}
+
+.micro-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-soft);
+  margin-bottom: 6px;
+}
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  background: var(--ink);
+  color: var(--paper);
+  border-radius: 10px;
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  box-shadow: var(--shadow);
+  z-index: 30;
+  font-size: 0.88rem;
+  max-width: calc(100vw - 32px);
+}
+
+.toast .btn.small {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
 .card h3 {
   font-size: 1.18rem;
   font-weight: 600;

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 function splitList(s) {
   return (s || "")
@@ -15,11 +15,14 @@ function scoreOptions() {
   return opts;
 }
 
+const UNDO_WINDOW_MS = 6000;
+
 export default function Page() {
   const [perfumes, setPerfumes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
   const [readOnly, setReadOnly] = useState(false);
+  const [usage, setUsage] = useState(null);
 
   const [search, setSearch] = useState("");
   const [filterFamily, setFilterFamily] = useState("");
@@ -27,6 +30,8 @@ export default function Page() {
   const [sortBy, setSortBy] = useState("my_score_desc");
 
   const [modal, setModal] = useState(null); // { mode: 'view'|'form', perfume }
+  const [toast, setToast] = useState(null); // { perfume }
+  const undoTimer = useRef(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -46,10 +51,18 @@ export default function Page() {
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
+    fetch("/api/usage")
+      .then((r) => r.json())
+      .then((data) => {
+        if (!cancelled) setUsage(data.usage || null);
+      })
+      .catch(() => {});
     return () => {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => () => clearTimeout(undoTimer.current), []);
 
   const families = useMemo(
     () => Array.from(new Set(perfumes.map((p) => p.family).filter(Boolean))).sort(),
@@ -136,6 +149,7 @@ export default function Page() {
 
   async function deleteDoc(id, name) {
     if (!confirm(`Excluir "${name}" da coleção?`)) return;
+    const target = perfumes.find((p) => p.id === id);
     const res = await fetch(`/api/perfumes/${encodeURIComponent(id)}`, { method: "DELETE" });
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
@@ -144,6 +158,30 @@ export default function Page() {
     }
     setPerfumes((prev) => prev.filter((p) => p.id !== id));
     setModal(null);
+
+    clearTimeout(undoTimer.current);
+    setToast(target ? { perfume: target } : null);
+    if (target) {
+      undoTimer.current = setTimeout(() => setToast(null), UNDO_WINDOW_MS);
+    }
+  }
+
+  async function undoDelete() {
+    if (!toast) return;
+    clearTimeout(undoTimer.current);
+    const { perfume } = toast;
+    setToast(null);
+    const res = await fetch("/api/perfumes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(perfume),
+    });
+    const data = await res.json();
+    if (res.ok) {
+      setPerfumes((prev) => [...prev, data.perfume]);
+    } else {
+      alert(data.error || "Não foi possível desfazer a exclusão.");
+    }
   }
 
   return (
@@ -166,6 +204,14 @@ export default function Page() {
         API da Fragella (mais de 74 mil fragrâncias) e preenche marca, ano,
         pirâmide de notas, acordes e avaliação. Depois é só completar sua nota,
         as notas que você sentiu e sua impressão pessoal.
+        {usage && (
+          <>
+            {" "}
+            <span style={{ color: usage.count >= usage.limit ? "var(--danger)" : "var(--gold)", fontWeight: 600 }}>
+              {usage.count}/{usage.limit} buscas usadas este mês.
+            </span>
+          </>
+        )}
       </div>
 
       {loadError && <div className="hint" style={{ borderColor: "var(--danger)" }}>Erro ao carregar: {loadError}</div>}
@@ -238,6 +284,15 @@ export default function Page() {
 
       <footer className="note">Seus dados ficam salvos neste site e sincronizam automaticamente.</footer>
 
+      {toast && (
+        <div className="toast">
+          <span>&quot;{toast.perfume.name}&quot; excluído.</span>
+          <button className="btn small" onClick={undoDelete}>
+            Desfazer
+          </button>
+        </div>
+      )}
+
       {modal && (
         <div
           className="overlay"
@@ -256,6 +311,8 @@ export default function Page() {
             ) : (
               <FormView
                 existing={modal.perfume}
+                usage={usage}
+                onUsage={setUsage}
                 onClose={() => setModal(null)}
                 onSave={async (body) => {
                   const ok = await saveDoc(body);
@@ -298,7 +355,14 @@ function PerfumeCard({ d, onClick }) {
   return (
     <button className="card" onClick={onClick}>
       <div className="card-top">
-        <div>
+        {d.imageUrl ? (
+          <img src={d.imageUrl} alt="" className="card-thumb" />
+        ) : (
+          <div className="card-thumb placeholder" aria-hidden="true">
+            ⚱
+          </div>
+        )}
+        <div style={{ flex: 1, minWidth: 0 }}>
           <h3>{d.name}</h3>
           <div className="brand">
             {d.brand || ""}
@@ -329,8 +393,25 @@ function PerfumeCard({ d, onClick }) {
   );
 }
 
+function LabeledChips(label, arr) {
+  if (!arr || !arr.length) return null;
+  return (
+    <div key={label}>
+      <div className="micro-label">{label}</div>
+      <div className="chips">
+        {arr.map((n) => (
+          <span className="chip" key={n}>
+            {n}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function DetailView({ d, onClose, onEdit, onDelete }) {
   const hasPyramid = (d.top && d.top.length) || (d.heart && d.heart.length) || (d.base && d.base.length);
+  const hasExtras = d.volume || (d.climate && d.climate.length) || (d.occasion && d.occasion.length) || d.alerts;
   return (
     <div>
       <div className="modal-head">
@@ -346,6 +427,12 @@ function DetailView({ d, onClose, onEdit, onDelete }) {
           ✕
         </button>
       </div>
+
+      {d.imageUrl && (
+        <div className="detail-image-wrap">
+          <img src={d.imageUrl} alt={d.name} className="detail-image" />
+        </div>
+      )}
 
       {(d.family || typeof d.externalRating === "number") && (
         <div className="pill-row" style={{ marginTop: 8 }}>
@@ -411,9 +498,7 @@ function DetailView({ d, onClose, onEdit, onDelete }) {
       <div className="section-label">Minha experiência</div>
       <div style={{ display: "flex", gap: 18, flexWrap: "wrap", alignItems: "flex-start" }}>
         <div>
-          <div style={{ fontSize: ".7rem", textTransform: "uppercase", letterSpacing: ".06em", color: "var(--ink-soft)" }}>
-            Minha nota
-          </div>
+          <div className="micro-label">Minha nota</div>
           <div
             className={`score-badge${typeof d.myScore !== "number" ? " empty" : ""}`}
             style={{ marginTop: 6, width: 52, height: 52, fontSize: "1.15rem" }}
@@ -422,29 +507,34 @@ function DetailView({ d, onClose, onEdit, onDelete }) {
           </div>
         </div>
         {d.myNotes && d.myNotes.length > 0 && (
-          <div style={{ flex: 1, minWidth: 180 }}>
-            <div
-              style={{
-                fontSize: ".7rem",
-                textTransform: "uppercase",
-                letterSpacing: ".06em",
-                color: "var(--ink-soft)",
-                marginBottom: 6,
-              }}
-            >
-              Notas que senti
-            </div>
-            <div className="chips">
-              {d.myNotes.map((n) => (
-                <span className="chip" key={n}>
-                  {n}
-                </span>
-              ))}
-            </div>
-          </div>
+          <div style={{ flex: 1, minWidth: 180 }}>{LabeledChips("Notas que senti", d.myNotes)}</div>
         )}
       </div>
       {d.myImpression && <p style={{ fontStyle: "italic", marginTop: 12, lineHeight: 1.5 }}>&quot;{d.myImpression}&quot;</p>}
+
+      {hasExtras && (
+        <>
+          <div className="section-label">Detalhes de uso</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {d.volume && (
+              <div>
+                <span className="micro-label" style={{ marginRight: 8 }}>
+                  Volume/Formato
+                </span>
+                <span>{d.volume}</span>
+              </div>
+            )}
+            {LabeledChips("Clima ideal", d.climate)}
+            {LabeledChips("Ocasião de uso", d.occasion)}
+            {d.alerts && (
+              <div>
+                <div className="micro-label">Alertas / o que incomodou</div>
+                <p style={{ margin: "4px 0 0" }}>{d.alerts}</p>
+              </div>
+            )}
+          </div>
+        </>
+      )}
 
       <div className="modal-actions">
         <button className="btn ghost" onClick={onDelete}>
@@ -460,7 +550,7 @@ function DetailView({ d, onClose, onEdit, onDelete }) {
   );
 }
 
-function FormView({ existing, onClose, onSave, onDelete }) {
+function FormView({ existing, onClose, onSave, onDelete, usage, onUsage }) {
   const d = existing || {};
   const [name, setName] = useState(d.name || "");
   const [brand, setBrand] = useState(d.brand || "");
@@ -470,11 +560,16 @@ function FormView({ existing, onClose, onSave, onDelete }) {
   const [top, setTop] = useState((d.top || []).join(", "));
   const [heart, setHeart] = useState((d.heart || []).join(", "));
   const [base, setBase] = useState((d.base || []).join(", "));
+  const [imageUrl, setImageUrl] = useState(d.imageUrl || "");
   const [externalRating, setExternalRating] = useState(
     typeof d.externalRating === "number" ? d.externalRating : ""
   );
   const [externalUrl, setExternalUrl] = useState(d.externalUrl || "");
   const [externalSource, setExternalSource] = useState(d.externalSource || "");
+  const [volume, setVolume] = useState(d.volume || "");
+  const [climate, setClimate] = useState((d.climate || []).join(", "));
+  const [occasion, setOccasion] = useState((d.occasion || []).join(", "));
+  const [alerts, setAlerts] = useState(d.alerts || "");
   const [myNotes, setMyNotes] = useState((d.myNotes || []).join(", "));
   const [myImpression, setMyImpression] = useState(d.myImpression || "");
   const [myScore, setMyScore] = useState(typeof d.myScore === "number" ? d.myScore : null);
@@ -483,14 +578,17 @@ function FormView({ existing, onClose, onSave, onDelete }) {
   const [searchError, setSearchError] = useState(null);
   const [searchResults, setSearchResults] = useState(null);
 
+  const quotaReached = usage && usage.count >= usage.limit;
+
   async function runSearch() {
-    if (!name.trim()) return;
+    if (!name.trim() || quotaReached) return;
     setSearchLoading(true);
     setSearchError(null);
     setSearchResults(null);
     try {
       const res = await fetch(`/api/search?q=${encodeURIComponent(name.trim())}`);
       const data = await res.json();
+      if (data.usage) onUsage(data.usage);
       if (!res.ok) {
         setSearchError(data.error || "Erro na busca.");
         return;
@@ -515,6 +613,7 @@ function FormView({ existing, onClose, onSave, onDelete }) {
     setTop((r.top || []).join(", "));
     setHeart((r.heart || []).join(", "));
     setBase((r.base || []).join(", "));
+    setImageUrl(r.imageUrl || imageUrl);
     setExternalRating(typeof r.rating === "number" ? r.rating : externalRating);
     setExternalUrl(r.sourceUrl || externalUrl);
     setExternalSource("Fragella");
@@ -533,9 +632,14 @@ function FormView({ existing, onClose, onSave, onDelete }) {
       top: splitList(top),
       heart: splitList(heart),
       base: splitList(base),
+      imageUrl: imageUrl.trim() || null,
       externalSource: externalSource || null,
       externalRating: externalRating !== "" ? parseFloat(externalRating) : null,
       externalUrl: externalUrl.trim() || null,
+      volume: volume.trim() || null,
+      climate: splitList(climate),
+      occasion: splitList(occasion),
+      alerts: alerts.trim() || null,
       myNotes: splitList(myNotes),
       myImpression: myImpression.trim(),
       myScore,
@@ -564,10 +668,25 @@ function FormView({ existing, onClose, onSave, onDelete }) {
           Nome do perfume*
           <div className="name-search-row">
             <input className="field-input" value={name} onChange={(e) => setName(e.target.value)} required />
-            <button type="button" className="btn" onClick={runSearch} disabled={searchLoading || !name.trim()}>
+            <button
+              type="button"
+              className="btn"
+              onClick={runSearch}
+              disabled={searchLoading || !name.trim() || quotaReached}
+              title={quotaReached ? "Cota mensal da Fragella esgotada" : undefined}
+            >
               {searchLoading ? "Buscando…" : "Buscar dados"}
             </button>
           </div>
+          {usage && (
+            <span
+              className={`search-status${quotaReached ? " error" : ""}`}
+              style={{ marginTop: 4 }}
+            >
+              {usage.count}/{usage.limit} buscas usadas este mês
+              {quotaReached ? " — cota esgotada, preencha manualmente ou espere o próximo mês." : ""}
+            </span>
+          )}
         </label>
         {searchError && <div className="search-status error full">{searchError}</div>}
         {searchResults && (
@@ -633,6 +752,46 @@ function FormView({ existing, onClose, onSave, onDelete }) {
         <label>
           Link da ficha externa
           <input className="field-input" value={externalUrl} onChange={(e) => setExternalUrl(e.target.value)} />
+        </label>
+        <label className="full">
+          Foto do frasco (link da imagem)
+          <input className="field-input" value={imageUrl} onChange={(e) => setImageUrl(e.target.value)} />
+        </label>
+        {imageUrl && <img src={imageUrl} alt="" className="form-image-preview full" />}
+      </div>
+
+      <div className="section-label">Detalhes de uso</div>
+      <div className="form-grid">
+        <label>
+          Volume / Formato
+          <input
+            className="field-input"
+            placeholder="ex: Decant 5ml, Frasco 100ml"
+            value={volume}
+            onChange={(e) => setVolume(e.target.value)}
+          />
+        </label>
+        <label>
+          Clima ideal (separe por vírgula)
+          <input
+            className="field-input"
+            placeholder="ex: Verão, Primavera"
+            value={climate}
+            onChange={(e) => setClimate(e.target.value)}
+          />
+        </label>
+        <label className="full">
+          Ocasião de uso (separe por vírgula)
+          <input
+            className="field-input"
+            placeholder="ex: Dia a dia, Noite / Festa"
+            value={occasion}
+            onChange={(e) => setOccasion(e.target.value)}
+          />
+        </label>
+        <label className="full">
+          Alertas / o que incomodou
+          <input className="field-input" value={alerts} onChange={(e) => setAlerts(e.target.value)} />
         </label>
       </div>
 

@@ -3,6 +3,19 @@ import "./globals.css";
 export const metadata = {
   title: "Diário Olfativo",
   description: "Coleção pessoal de perfumes com dados oficiais e suas próprias impressões.",
+  appleWebApp: {
+    capable: true,
+    title: "Diário Olfativo",
+    statusBarStyle: "default",
+  },
+  icons: {
+    icon: [{ url: "/icons/icon-192.png", sizes: "192x192", type: "image/png" }],
+    apple: [{ url: "/icons/icon-192.png" }],
+  },
+};
+
+export const viewport = {
+  themeColor: "#9c3b53",
 };
 
 export default function RootLayout({ children }) {

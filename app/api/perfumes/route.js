@@ -76,11 +76,18 @@ export async function POST(request) {
         .eq("id", body.id)
         .limit(1);
       if (fetchError) throw fetchError;
-      if (!existingRows || existingRows.length === 0) {
-        return NextResponse.json({ error: "Perfume não encontrado" }, { status: 404 });
+
+      if (existingRows && existingRows.length > 0) {
+        const row = perfumeToRow({ ...body, updatedAt: now });
+        const { data, error } = await supabase.from("perfumes").update(row).eq("id", body.id).select().single();
+        if (error) throw error;
+        return NextResponse.json({ perfume: rowToPerfume(data) });
       }
-      const row = perfumeToRow({ ...body, updatedAt: now });
-      const { data, error } = await supabase.from("perfumes").update(row).eq("id", body.id).select().single();
+
+      // Sem linha existente com esse id: recria com o mesmo id (usado pelo
+      // "desfazer exclusão" — o registro apagado volta com a mesma identidade).
+      const row = perfumeToRow({ ...body, createdAt: body.createdAt || now, updatedAt: now });
+      const { data, error } = await supabase.from("perfumes").insert(row).select().single();
       if (error) throw error;
       return NextResponse.json({ perfume: rowToPerfume(data) });
     }

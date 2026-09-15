@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
+import { incrementSearchUsage } from "@/lib/db";
 
 const FRAGELLA_BASE = "https://api.fragella.com/api/v1";
+const MONTHLY_LIMIT = parseInt(process.env.FRAGELLA_MONTHLY_LIMIT, 10) || 20;
 
 // A Fragella às vezes varia o formato das chaves entre versões da API —
 // por isso cada campo tenta algumas variações plausíveis antes de desistir.
@@ -69,5 +71,10 @@ export async function GET(request) {
 
   const list = Array.isArray(data) ? data : data.results || data.fragrances || data.data || [];
   const results = list.map(normalize);
-  return NextResponse.json({ results });
+
+  const usage = await incrementSearchUsage();
+  return NextResponse.json({
+    results,
+    usage: usage ? { ...usage, limit: MONTHLY_LIMIT } : null,
+  });
 }
