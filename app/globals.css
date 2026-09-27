@@ -147,6 +147,67 @@ header.top {
   color: var(--ink-soft);
 }
 
+.stat.clickable {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+}
+
+.stat.clickable:hover .v {
+  color: var(--accent);
+}
+
+.stat.clickable.on .v {
+  color: var(--accent);
+}
+
+.stat.clickable.on .l {
+  color: var(--accent);
+}
+
+.status-chips {
+  flex-basis: 100%;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+}
+
+.status-chip {
+  border: 1px solid var(--line);
+  background: var(--paper-2);
+  border-radius: 99px;
+  padding: 6px 12px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  color: var(--ink-soft);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.status-chip:hover {
+  border-color: var(--ink-soft);
+}
+
+.status-chip .num {
+  font-weight: 600;
+}
+
+.status-chip.possuo.on {
+  background: var(--owned-bg);
+  color: var(--owned);
+  border-color: var(--owned);
+}
+
+.status-chip.desejo.on {
+  background: var(--gold-bg);
+  color: var(--gold);
+  border-color: var(--gold);
+}
+
 .controls {
   display: flex;
   gap: 10px;

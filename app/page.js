@@ -143,9 +143,11 @@ export default function Page() {
         topFam = f;
       }
     });
-    const owned = perfumes.filter((d) => d.status === "possuo_split" || d.status === "possuo_frasco").length;
-    const wishlist = perfumes.filter((d) => d.status === "desejo_split" || d.status === "desejo_frasco").length;
-    return { total, avg, topFam, owned, wishlist };
+    const statusCount = {};
+    STATUS_OPTIONS.forEach((s) => {
+      statusCount[s.value] = perfumes.filter((d) => d.status === s.value).length;
+    });
+    return { total, avg, topFam, statusCount };
   }, [perfumes]);
 
   async function saveDoc(body) {
@@ -235,9 +237,28 @@ export default function Page() {
         <div className="stats">
           <Stat v={stats.total} l="Perfumes" mono />
           <Stat v={stats.avg != null ? stats.avg.toFixed(1) : "—"} l="Nota média" mono />
-          <Stat v={stats.topFam || "—"} l="Família favorita" />
-          <Stat v={stats.owned} l="Tenho" mono />
-          <Stat v={stats.wishlist} l="Lista de desejos" mono />
+          <Stat
+            v={stats.topFam || "—"}
+            l="Família favorita"
+            active={Boolean(stats.topFam) && filterFamily === stats.topFam}
+            onClick={
+              stats.topFam
+                ? () => setFilterFamily((f) => (f === stats.topFam ? "" : stats.topFam))
+                : undefined
+            }
+          />
+        </div>
+        <div className="status-chips">
+          {STATUS_OPTIONS.map((s) => (
+            <button
+              type="button"
+              key={s.value}
+              className={`status-chip ${s.kind}${filterStatus === s.value ? " on" : ""}`}
+              onClick={() => setFilterStatus((v) => (v === s.value ? "" : s.value))}
+            >
+              {s.icon} {s.label} <span className="num">{stats.statusCount[s.value] || 0}</span>
+            </button>
+          ))}
         </div>
       </header>
 
@@ -392,15 +413,23 @@ export default function Page() {
   );
 }
 
-function Stat({ v, l, mono }) {
-  return (
-    <div className="stat">
+function Stat({ v, l, mono, onClick, active }) {
+  const content = (
+    <>
       <span className={mono ? "v num" : "v"} style={!mono ? { fontSize: "1.05rem", fontStyle: "italic" } : undefined}>
         {v}
       </span>
       <span className="l">{l}</span>
-    </div>
+    </>
   );
+  if (onClick) {
+    return (
+      <button type="button" className={`stat clickable${active ? " on" : ""}`} onClick={onClick}>
+        {content}
+      </button>
+    );
+  }
+  return <div className="stat">{content}</div>;
 }
 
 function pyramidRow(tag, arr) {
