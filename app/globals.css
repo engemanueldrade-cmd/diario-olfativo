@@ -10,6 +10,8 @@
   --gold: #a8781f;
   --gold-bg: #f6e6c4;
   --danger: #a8391f;
+  --owned: #3f7d55;
+  --owned-bg: #dcead9;
   --shadow: 0 1px 2px rgba(43, 22, 32, 0.06), 0 6px 20px -8px rgba(43, 22, 32, 0.18);
   color-scheme: light;
 }
@@ -27,6 +29,8 @@
     --gold: #e0b45c;
     --gold-bg: #3a2d17;
     --danger: #e0785c;
+    --owned: #7fc294;
+    --owned-bg: #24382b;
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 10px 30px -10px rgba(0, 0, 0, 0.55);
     color-scheme: dark;
   }
@@ -44,6 +48,8 @@
   --gold: #e0b45c;
   --gold-bg: #3a2d17;
   --danger: #e0785c;
+  --owned: #7fc294;
+  --owned-bg: #24382b;
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 10px 30px -10px rgba(0, 0, 0, 0.55);
   color-scheme: dark;
 }
@@ -331,6 +337,60 @@ button {
   z-index: 30;
   font-size: 0.88rem;
   max-width: calc(100vw - 32px);
+}
+
+.status-ribbon {
+  align-self: flex-start;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 4px 10px;
+  border-radius: 99px;
+  background: var(--owned-bg);
+  color: var(--owned);
+}
+
+.status-ribbon.lista_desejos {
+  background: var(--gold-bg);
+  color: var(--gold);
+}
+
+.status-ribbon.inline {
+  display: inline-block;
+  margin-top: 8px;
+  text-transform: none;
+  font-size: 0.8rem;
+}
+
+.status-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.status-picker button {
+  border: 1px solid var(--line);
+  background: var(--paper-2);
+  border-radius: 99px;
+  padding: 7px 14px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: var(--ink);
+}
+
+.status-picker button.on {
+  background: var(--owned-bg);
+  color: var(--owned);
+  border-color: var(--owned);
+  font-weight: 600;
+}
+
+.status-picker button.on.lista_desejos {
+  background: var(--gold-bg);
+  color: var(--gold);
+  border-color: var(--gold);
 }
 
 .toast .btn.small {

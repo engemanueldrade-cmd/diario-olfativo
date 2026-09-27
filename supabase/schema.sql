@@ -31,6 +31,10 @@ alter table perfumes add column if not exists climate jsonb default '[]'::jsonb;
 alter table perfumes add column if not exists occasion jsonb default '[]'::jsonb;
 alter table perfumes add column if not exists alerts text;
 
+-- Status de posse: 'tenho_decant' | 'tenho_frasco' | 'lista_desejos' | null
+-- (null = só catalogado, sem indicação de posse/interesse de compra).
+alter table perfumes add column if not exists status text;
+
 -- Contador de buscas na Fragella por mês (o plano free tem um limite mensal).
 create table if not exists api_usage (
   month text primary key,

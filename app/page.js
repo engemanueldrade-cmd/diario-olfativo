@@ -15,6 +15,16 @@ function scoreOptions() {
   return opts;
 }
 
+const STATUS_OPTIONS = [
+  { value: "tenho_decant", label: "Tenho (decant)", icon: "🧪" },
+  { value: "tenho_frasco", label: "Tenho (frasco)", icon: "🧴" },
+  { value: "lista_desejos", label: "Lista de desejos", icon: "⭐" },
+];
+
+function statusInfo(status) {
+  return STATUS_OPTIONS.find((s) => s.value === status) || null;
+}
+
 const UNDO_WINDOW_MS = 6000;
 
 export default function Page() {
@@ -27,6 +37,7 @@ export default function Page() {
   const [search, setSearch] = useState("");
   const [filterFamily, setFilterFamily] = useState("");
   const [filterNote, setFilterNote] = useState("");
+  const [filterStatus, setFilterStatus] = useState("");
   const [sortBy, setSortBy] = useState("my_score_desc");
 
   const [modal, setModal] = useState(null); // { mode: 'view'|'form', perfume }
@@ -78,6 +89,7 @@ export default function Page() {
         if (!hay.includes(q)) return false;
       }
       if (filterFamily && d.family !== filterFamily) return false;
+      if (filterStatus && d.status !== filterStatus) return false;
       if (noteQ) {
         const allNotes = [...(d.top || []), ...(d.heart || []), ...(d.base || []), ...(d.myNotes || [])]
           .join(" | ")
@@ -103,7 +115,7 @@ export default function Page() {
       }
     });
     return list;
-  }, [perfumes, search, filterFamily, filterNote, sortBy]);
+  }, [perfumes, search, filterFamily, filterNote, filterStatus, sortBy]);
 
   const stats = useMemo(() => {
     const total = perfumes.length;
@@ -121,7 +133,9 @@ export default function Page() {
         topFam = f;
       }
     });
-    return { total, avg, topFam };
+    const owned = perfumes.filter((d) => d.status === "tenho_decant" || d.status === "tenho_frasco").length;
+    const wishlist = perfumes.filter((d) => d.status === "lista_desejos").length;
+    return { total, avg, topFam, owned, wishlist };
   }, [perfumes]);
 
   async function saveDoc(body) {
@@ -195,6 +209,8 @@ export default function Page() {
           <Stat v={stats.total} l="Perfumes" mono />
           <Stat v={stats.avg != null ? stats.avg.toFixed(1) : "—"} l="Nota média" mono />
           <Stat v={stats.topFam || "—"} l="Família favorita" />
+          <Stat v={stats.owned} l="Tenho" mono />
+          <Stat v={stats.wishlist} l="Lista de desejos" mono />
         </div>
       </header>
 
@@ -236,6 +252,14 @@ export default function Page() {
           {families.map((f) => (
             <option key={f} value={f}>
               {f}
+            </option>
+          ))}
+        </select>
+        <select className="field-input" value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
+          <option value="">Qualquer status</option>
+          {STATUS_OPTIONS.map((s) => (
+            <option key={s.value} value={s.value}>
+              {s.icon} {s.label}
             </option>
           ))}
         </select>
@@ -352,8 +376,14 @@ function pyramidRow(tag, arr) {
 }
 
 function PerfumeCard({ d, onClick }) {
+  const status = statusInfo(d.status);
   return (
     <button className="card" onClick={onClick}>
+      {status && (
+        <div className={`status-ribbon ${status.value}`}>
+          {status.icon} {status.label}
+        </div>
+      )}
       <div className="card-top">
         {d.imageUrl ? (
           <img src={d.imageUrl} alt="" className="card-thumb" />
@@ -412,6 +442,7 @@ function LabeledChips(label, arr) {
 function DetailView({ d, onClose, onEdit, onDelete }) {
   const hasPyramid = (d.top && d.top.length) || (d.heart && d.heart.length) || (d.base && d.base.length);
   const hasExtras = d.volume || (d.climate && d.climate.length) || (d.occasion && d.occasion.length) || d.alerts;
+  const status = statusInfo(d.status);
   return (
     <div>
       <div className="modal-head">
@@ -427,6 +458,8 @@ function DetailView({ d, onClose, onEdit, onDelete }) {
           ✕
         </button>
       </div>
+
+      {status && <div className={`status-ribbon inline ${status.value}`}>{status.icon} {status.label}</div>}
 
       {d.imageUrl && (
         <div className="detail-image-wrap">
@@ -573,6 +606,7 @@ function FormView({ existing, onClose, onSave, onDelete, usage, onUsage }) {
   const [myNotes, setMyNotes] = useState((d.myNotes || []).join(", "));
   const [myImpression, setMyImpression] = useState(d.myImpression || "");
   const [myScore, setMyScore] = useState(typeof d.myScore === "number" ? d.myScore : null);
+  const [status, setStatus] = useState(d.status || "");
 
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchError, setSearchError] = useState(null);
@@ -643,6 +677,7 @@ function FormView({ existing, onClose, onSave, onDelete, usage, onUsage }) {
       myNotes: splitList(myNotes),
       myImpression: myImpression.trim(),
       myScore,
+      status: status || null,
     });
   }
 
@@ -660,6 +695,26 @@ function FormView({ existing, onClose, onSave, onDelete, usage, onUsage }) {
         <button className="close-x" onClick={onClose}>
           ✕
         </button>
+      </div>
+
+      <div className="status-picker">
+        <button
+          type="button"
+          className={status === "" ? "on" : ""}
+          onClick={() => setStatus("")}
+        >
+          Sem status
+        </button>
+        {STATUS_OPTIONS.map((s) => (
+          <button
+            type="button"
+            key={s.value}
+            className={status === s.value ? `on ${s.value}` : ""}
+            onClick={() => setStatus(status === s.value ? "" : s.value)}
+          >
+            {s.icon} {s.label}
+          </button>
+        ))}
       </div>
 
       <div className="section-label">Dados oficiais</div>
