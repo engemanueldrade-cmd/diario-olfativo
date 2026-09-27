@@ -16,9 +16,10 @@ function scoreOptions() {
 }
 
 const STATUS_OPTIONS = [
-  { value: "tenho_decant", label: "Tenho (decant)", icon: "🧪" },
-  { value: "tenho_frasco", label: "Tenho (frasco)", icon: "🧴" },
-  { value: "lista_desejos", label: "Lista de desejos", icon: "⭐" },
+  { value: "possuo_split", label: "Possuo Split", icon: "🧪", kind: "possuo" },
+  { value: "possuo_frasco", label: "Possuo Frasco", icon: "🧴", kind: "possuo" },
+  { value: "desejo_split", label: "Desejo Split", icon: "✨", kind: "desejo" },
+  { value: "desejo_frasco", label: "Desejo Frasco", icon: "🎁", kind: "desejo" },
 ];
 
 function statusInfo(status) {
@@ -133,8 +134,8 @@ export default function Page() {
         topFam = f;
       }
     });
-    const owned = perfumes.filter((d) => d.status === "tenho_decant" || d.status === "tenho_frasco").length;
-    const wishlist = perfumes.filter((d) => d.status === "lista_desejos").length;
+    const owned = perfumes.filter((d) => d.status === "possuo_split" || d.status === "possuo_frasco").length;
+    const wishlist = perfumes.filter((d) => d.status === "desejo_split" || d.status === "desejo_frasco").length;
     return { total, avg, topFam, owned, wishlist };
   }, [perfumes]);
 
@@ -380,7 +381,7 @@ function PerfumeCard({ d, onClick }) {
   return (
     <button className="card" onClick={onClick}>
       {status && (
-        <div className={`status-ribbon ${status.value}`}>
+        <div className={`status-ribbon ${status.kind}`}>
           {status.icon} {status.label}
         </div>
       )}
@@ -459,7 +460,7 @@ function DetailView({ d, onClose, onEdit, onDelete }) {
         </button>
       </div>
 
-      {status && <div className={`status-ribbon inline ${status.value}`}>{status.icon} {status.label}</div>}
+      {status && <div className={`status-ribbon inline ${status.kind}`}>{status.icon} {status.label}</div>}
 
       {d.imageUrl && (
         <div className="detail-image-wrap">
@@ -697,25 +698,17 @@ function FormView({ existing, onClose, onSave, onDelete, usage, onUsage }) {
         </button>
       </div>
 
-      <div className="status-picker">
-        <button
-          type="button"
-          className={status === "" ? "on" : ""}
-          onClick={() => setStatus("")}
-        >
-          Sem status
-        </button>
-        {STATUS_OPTIONS.map((s) => (
-          <button
-            type="button"
-            key={s.value}
-            className={status === s.value ? `on ${s.value}` : ""}
-            onClick={() => setStatus(status === s.value ? "" : s.value)}
-          >
-            {s.icon} {s.label}
-          </button>
-        ))}
-      </div>
+      <label className={`status-select ${status ? statusInfo(status)?.kind : ""}`}>
+        Status na coleção
+        <select className="field-input" value={status} onChange={(e) => setStatus(e.target.value)}>
+          <option value="">Não possuo</option>
+          {STATUS_OPTIONS.map((s) => (
+            <option key={s.value} value={s.value}>
+              {s.icon} {s.label}
+            </option>
+          ))}
+        </select>
+      </label>
 
       <div className="section-label">Dados oficiais</div>
       <div className="form-grid">
