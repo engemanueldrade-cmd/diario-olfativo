@@ -26,6 +26,15 @@ function statusInfo(status) {
   return STATUS_OPTIONS.find((s) => s.value === status) || null;
 }
 
+function normalizeName(s) {
+  return (s || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
 const UNDO_WINDOW_MS = 6000;
 
 export default function Page() {
@@ -160,6 +169,23 @@ export default function Page() {
       return [...prev, data.perfume];
     });
     return true;
+  }
+
+  async function quickUpdateStatus(id, name, status) {
+    // Atualização otimista: reflete na tela antes da resposta do servidor,
+    // e desfaz se a chamada falhar.
+    const prev = perfumes;
+    setPerfumes((list) => list.map((p) => (p.id === id ? { ...p, status } : p)));
+    const res = await fetch("/api/perfumes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, name, status }),
+    });
+    if (!res.ok) {
+      setPerfumes(prev);
+      const data = await res.json().catch(() => ({}));
+      alert(data.error || "Erro ao atualizar status.");
+    }
   }
 
   async function deleteDoc(id, name) {
@@ -301,7 +327,13 @@ export default function Page() {
             </div>
           ) : (
             filtered.map((d) => (
-              <PerfumeCard key={d.id} d={d} onClick={() => setModal({ mode: "view", perfume: d })} />
+              <PerfumeCard
+                key={d.id}
+                d={d}
+                onClick={() => setModal({ mode: "view", perfume: d })}
+                onEdit={() => setModal({ mode: "form", perfume: d })}
+                onStatusChange={(status) => quickUpdateStatus(d.id, d.name, status)}
+              />
             ))
           )}
         </div>
@@ -331,11 +363,15 @@ export default function Page() {
                 d={modal.perfume}
                 onClose={() => setModal(null)}
                 onEdit={() => setModal({ mode: "form", perfume: modal.perfume })}
+                onRefresh={() => setModal({ mode: "form", perfume: modal.perfume, autoSearch: true })}
                 onDelete={() => deleteDoc(modal.perfume.id, modal.perfume.name)}
               />
             ) : (
               <FormView
+                key={modal.perfume ? modal.perfume.id : "new"}
                 existing={modal.perfume}
+                autoSearch={modal.autoSearch}
+                allPerfumes={perfumes}
                 usage={usage}
                 onUsage={setUsage}
                 onClose={() => setModal(null)}
@@ -343,6 +379,7 @@ export default function Page() {
                   const ok = await saveDoc(body);
                   if (ok) setModal(null);
                 }}
+                onSwitchExisting={(p) => setModal({ mode: "form", perfume: p })}
                 onDelete={
                   modal.perfume ? () => deleteDoc(modal.perfume.id, modal.perfume.name) : null
                 }
@@ -376,51 +413,74 @@ function pyramidRow(tag, arr) {
   );
 }
 
-function PerfumeCard({ d, onClick }) {
+function PerfumeCard({ d, onClick, onEdit, onStatusChange }) {
   const status = statusInfo(d.status);
   return (
-    <button className="card" onClick={onClick}>
-      {status && (
-        <div className={`status-ribbon ${status.kind}`}>
-          {status.icon} {status.label}
-        </div>
-      )}
-      <div className="card-top">
-        {d.imageUrl ? (
-          <img src={d.imageUrl} alt="" className="card-thumb" />
-        ) : (
-          <div className="card-thumb placeholder" aria-hidden="true">
-            ⚱
+    <div className="card">
+      <div className="card-quickbar">
+        <select
+          className={`status-quickselect ${status ? status.kind : ""}`}
+          value={d.status || ""}
+          onClick={(e) => e.stopPropagation()}
+          onChange={(e) => onStatusChange(e.target.value || null)}
+        >
+          <option value="">Não possuo</option>
+          {STATUS_OPTIONS.map((s) => (
+            <option key={s.value} value={s.value}>
+              {s.icon} {s.label}
+            </option>
+          ))}
+        </select>
+        <button
+          type="button"
+          className="card-edit-btn"
+          title="Editar perfume"
+          onClick={(e) => {
+            e.stopPropagation();
+            onEdit();
+          }}
+        >
+          ✏️
+        </button>
+      </div>
+      <button className="card-body" onClick={onClick}>
+        <div className="card-top">
+          {d.imageUrl ? (
+            <img src={d.imageUrl} alt="" className="card-thumb" />
+          ) : (
+            <div className="card-thumb placeholder" aria-hidden="true">
+              ⚱
+            </div>
+          )}
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <h3>{d.name}</h3>
+            <div className="brand">
+              {d.brand || ""}
+              {d.year ? ` · ${d.year}` : ""}
+            </div>
           </div>
-        )}
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <h3>{d.name}</h3>
-          <div className="brand">
-            {d.brand || ""}
-            {d.year ? ` · ${d.year}` : ""}
-          </div>
+          {typeof d.myScore === "number" ? (
+            <div className="score-badge">{d.myScore.toFixed(1)}</div>
+          ) : (
+            <div className="score-badge empty">?</div>
+          )}
         </div>
-        {typeof d.myScore === "number" ? (
-          <div className="score-badge">{d.myScore.toFixed(1)}</div>
-        ) : (
-          <div className="score-badge empty">?</div>
-        )}
-      </div>
-      <div className="pill-row">
-        {d.family && <span className="pill family">{d.family}</span>}
-        {typeof d.externalRating === "number" && (
-          <span className="pill ext">
-            {d.externalSource || "Externa"} {d.externalRating.toFixed(1)}
-          </span>
-        )}
-      </div>
-      <div className="pyramid">
-        {pyramidRow("Topo", d.top)}
-        {pyramidRow("Coração", d.heart)}
-        {pyramidRow("Fundo", d.base)}
-      </div>
-      {d.myImpression && <div className="impression">&quot;{d.myImpression}&quot;</div>}
-    </button>
+        <div className="pill-row">
+          {d.family && <span className="pill family">{d.family}</span>}
+          {typeof d.externalRating === "number" && (
+            <span className="pill ext">
+              {d.externalSource || "Externa"} {d.externalRating.toFixed(1)}
+            </span>
+          )}
+        </div>
+        <div className="pyramid">
+          {pyramidRow("Topo", d.top)}
+          {pyramidRow("Coração", d.heart)}
+          {pyramidRow("Fundo", d.base)}
+        </div>
+        {d.myImpression && <div className="impression">&quot;{d.myImpression}&quot;</div>}
+      </button>
+    </div>
   );
 }
 
@@ -440,7 +500,7 @@ function LabeledChips(label, arr) {
   );
 }
 
-function DetailView({ d, onClose, onEdit, onDelete }) {
+function DetailView({ d, onClose, onEdit, onRefresh, onDelete }) {
   const hasPyramid = (d.top && d.top.length) || (d.heart && d.heart.length) || (d.base && d.base.length);
   const hasExtras = d.volume || (d.climate && d.climate.length) || (d.occasion && d.occasion.length) || d.alerts;
   const status = statusInfo(d.status);
@@ -575,6 +635,9 @@ function DetailView({ d, onClose, onEdit, onDelete }) {
           Excluir perfume
         </button>
         <div className="save-row">
+          <button className="btn" onClick={onRefresh} title="Buscar de novo na Fragella para completar dados faltando (ex: foto)">
+            🔍 Atualizar dados
+          </button>
           <button className="btn" onClick={onEdit}>
             Editar
           </button>
@@ -584,7 +647,7 @@ function DetailView({ d, onClose, onEdit, onDelete }) {
   );
 }
 
-function FormView({ existing, onClose, onSave, onDelete, usage, onUsage }) {
+function FormView({ existing, autoSearch, allPerfumes, onClose, onSave, onSwitchExisting, onDelete, usage, onUsage }) {
   const d = existing || {};
   const [name, setName] = useState(d.name || "");
   const [brand, setBrand] = useState(d.brand || "");
@@ -612,8 +675,29 @@ function FormView({ existing, onClose, onSave, onDelete, usage, onUsage }) {
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchError, setSearchError] = useState(null);
   const [searchResults, setSearchResults] = useState(null);
+  const [dismissedDuplicate, setDismissedDuplicate] = useState(false);
 
   const quotaReached = usage && usage.count >= usage.limit;
+
+  const duplicate = useMemo(() => {
+    if (!allPerfumes || !name.trim()) return null;
+    const target = normalizeName(name);
+    if (!target) return null;
+    return (
+      allPerfumes.find((p) => p.id !== (existing && existing.id) && normalizeName(p.name) === target) || null
+    );
+  }, [allPerfumes, name, existing]);
+
+  useEffect(() => {
+    setDismissedDuplicate(false);
+  }, [duplicate]);
+
+  useEffect(() => {
+    if (autoSearch && name.trim()) {
+      runSearch();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function runSearch() {
     if (!name.trim() || quotaReached) return;
@@ -736,6 +820,22 @@ function FormView({ existing, onClose, onSave, onDelete, usage, onUsage }) {
             </span>
           )}
         </label>
+        {duplicate && !dismissedDuplicate && (
+          <div className="duplicate-warning full">
+            <div>
+              Você já tem <strong>{duplicate.name}</strong>
+              {duplicate.brand ? ` — ${duplicate.brand}` : ""} na coleção.
+            </div>
+            <div className="duplicate-warning-actions">
+              <button type="button" className="btn small primary" onClick={() => onSwitchExisting(duplicate)}>
+                Editar o existente
+              </button>
+              <button type="button" className="btn small ghost" onClick={() => setDismissedDuplicate(true)}>
+                Salvar mesmo assim (é diferente)
+              </button>
+            </div>
+          </div>
+        )}
         {searchError && <div className="search-status error full">{searchError}</div>}
         {searchResults && (
           <div className="search-results full">
@@ -880,7 +980,12 @@ function FormView({ existing, onClose, onSave, onDelete, usage, onUsage }) {
           <button className="btn" onClick={onClose}>
             Cancelar
           </button>
-          <button className="btn primary" onClick={submit}>
+          <button
+            className="btn primary"
+            onClick={submit}
+            disabled={Boolean(duplicate && !dismissedDuplicate)}
+            title={duplicate && !dismissedDuplicate ? "Resolva o aviso de duplicata acima antes de salvar" : undefined}
+          >
             Salvar
           </button>
         </div>
