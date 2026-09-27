@@ -8,8 +8,9 @@ export const config = {
 export async function proxy(request) {
   const { pathname } = request.nextUrl;
 
-  // A própria rota de login precisa ficar acessível sem estar autenticado.
-  if (pathname === "/api/login") return NextResponse.next();
+  // A própria rota de login, e o keep-alive chamado pelo Vercel Cron (sem
+  // cookie de sessão), precisam ficar acessíveis sem estar autenticado.
+  if (pathname === "/api/login" || pathname === "/api/keepalive") return NextResponse.next();
 
   const secret = process.env.SITE_PASSWORD;
   if (!secret) {
