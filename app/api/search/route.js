@@ -46,7 +46,7 @@ export async function GET(request) {
     );
   }
 
-  const url = `${FRAGELLA_BASE}/fragrances?search=${encodeURIComponent(q)}&limit=6`;
+  const url = `${FRAGELLA_BASE}/fragrances?search=${encodeURIComponent(q)}&limit=25`;
   let res;
   try {
     res = await fetch(url, { headers: { "x-api-key": apiKey } });

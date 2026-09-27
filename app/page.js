@@ -810,6 +810,10 @@ function FormView({ existing, autoSearch, allPerfumes, onClose, onSave, onSwitch
               {searchLoading ? "Buscando…" : "Buscar dados"}
             </button>
           </div>
+          <span className="search-status">
+            Mostra até 25 resultados por busca. Se não achar o certo, inclua a marca no nome
+            (ex: &quot;Wild Vetiver Creed&quot;) e busque de novo.
+          </span>
           {usage && (
             <span
               className={`search-status${quotaReached ? " error" : ""}`}
