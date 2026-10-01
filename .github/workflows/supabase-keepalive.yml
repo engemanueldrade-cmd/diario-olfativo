@@ -11,6 +11,7 @@ name: Supabase Keep-Alive (todos os projetos)
 on:
   schedule:
     - cron: "0 6 * * *" # 06:00 UTC todo dia
+    - cron: "0 12 1 10 *" # TESTE ÚNICO 01/10 12:00 UTC — remover depois de confirmar
   workflow_dispatch: {} # permite rodar manualmente pela aba Actions
 
 jobs:
