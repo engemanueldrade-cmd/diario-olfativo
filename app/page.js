@@ -35,7 +35,69 @@ function normalizeName(s) {
     .trim();
 }
 
-const UNDO_WINDOW_MS = 6000;
+const TOAST_MS = 6000;
+
+const SORT_OPTIONS = [
+  { value: "my_score_desc", label: "Minha nota" },
+  { value: "name_asc", label: "Nome (A–Z)" },
+  { value: "brand_asc", label: "Marca (A–Z)" },
+  { value: "year_desc", label: "Ano (recente)" },
+  { value: "created_desc", label: "Adicionados recentemente" },
+];
+
+// Cor do cartão sem foto, derivada do primeiro acorde reconhecido.
+const FAMILY_HUES = [
+  [/citr|lemon|bergamot|orange|grapefruit/, 48],
+  [/aquat|marine|fresh|ozon|water|salt|sea/, 195],
+  [/fruit|berry|peach|apple|cherry|plum/, 355],
+  [/rose|floral|flower|iris|violet|jasmin|peony|lily|tuberose/, 335],
+  [/vanill|sweet|gourmand|caramel|honey|tonka|oriental|amber|balsam|coffee|chocolate/, 22],
+  [/spic|cinnam|pepper|saffron|cardamom/, 8],
+  [/leather|tobacco|smok|oud|incense|resin|animal/, 15],
+  [/green|herb|aromatic|lavender|mint|fougere|tea/, 135],
+  [/powder/, 290],
+  [/musk/, 305],
+  [/earth|moss|patchouli|mineral|chypre|oakmoss/, 95],
+  [/wood|cedar|sandal|vetiver|cypress/, 30],
+];
+
+function familyHue(family) {
+  const accords = splitList(family).map((a) => normalizeName(a));
+  for (const a of accords) {
+    for (const [re, hue] of FAMILY_HUES) if (re.test(a)) return hue;
+  }
+  let h = 0;
+  const s = family || "";
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 360;
+  return h;
+}
+
+function coverStyle(d) {
+  return { "--h": familyHue(d.family) };
+}
+
+function coverInitial(d) {
+  const src = (d.brand || d.name || "?").trim();
+  return src.charAt(0).toUpperCase();
+}
+
+function matchesStatus(d, f) {
+  if (!f) return true;
+  if (f === "none") return !d.status;
+  if (f === "possuo" || f === "desejo") {
+    const info = statusInfo(d.status);
+    return Boolean(info) && info.kind === f;
+  }
+  return d.status === f;
+}
+
+function statusFilterLabel(f) {
+  if (f === "none") return "Não possuo";
+  if (f === "possuo") return "Todos que possuo";
+  if (f === "desejo") return "Todos que desejo";
+  const info = statusInfo(f);
+  return info ? `${info.icon} ${info.label}` : f;
+}
 
 export default function Page() {
   const [perfumes, setPerfumes] = useState([]);
@@ -49,10 +111,26 @@ export default function Page() {
   const [filterNote, setFilterNote] = useState("");
   const [filterStatus, setFilterStatus] = useState("");
   const [sortBy, setSortBy] = useState("my_score_desc");
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [view, setView] = useState("grid");
 
-  const [modal, setModal] = useState(null); // { mode: 'view'|'form', perfume }
-  const [toast, setToast] = useState(null); // { perfume }
-  const undoTimer = useRef(null);
+  const [modal, setModal] = useState(null); // { mode: 'view'|'form', perfume, autoSearch?, initialName? }
+  const [toast, setToast] = useState(null); // { id, message, action? }
+  const toastTimer = useRef(null);
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("diario_view");
+      if (saved === "grid" || saved === "list") setView(saved);
+    } catch {}
+  }, []);
+
+  function changeView(v) {
+    setView(v);
+    try {
+      localStorage.setItem("diario_view", v);
+    } catch {}
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -83,7 +161,18 @@ export default function Page() {
     };
   }, []);
 
-  useEffect(() => () => clearTimeout(undoTimer.current), []);
+  useEffect(() => () => clearTimeout(toastTimer.current), []);
+
+  function showToast(message, action) {
+    clearTimeout(toastTimer.current);
+    setToast({ id: Date.now(), message, action });
+    toastTimer.current = setTimeout(() => setToast(null), TOAST_MS);
+  }
+
+  function dismissToast() {
+    clearTimeout(toastTimer.current);
+    setToast(null);
+  }
 
   const families = useMemo(
     () => Array.from(new Set(perfumes.map((p) => p.family).filter(Boolean))).sort(),
@@ -99,7 +188,7 @@ export default function Page() {
         if (!hay.includes(q)) return false;
       }
       if (filterFamily && d.family !== filterFamily) return false;
-      if (filterStatus && d.status !== filterStatus) return false;
+      if (!matchesStatus(d, filterStatus)) return false;
       if (noteQ) {
         const allNotes = [...(d.top || []), ...(d.heart || []), ...(d.base || []), ...(d.myNotes || [])]
           .join(" | ")
@@ -116,6 +205,8 @@ export default function Page() {
           return (b.year || 0) - (a.year || 0);
         case "brand_asc":
           return (a.brand || "").localeCompare(b.brand || "");
+        case "created_desc":
+          return (b.createdAt || 0) - (a.createdAt || 0);
         case "my_score_desc":
         default: {
           const av = typeof a.myScore === "number" ? a.myScore : -1;
@@ -150,6 +241,83 @@ export default function Page() {
     return { total, avg, topFam, statusCount };
   }, [perfumes]);
 
+  // "Já tenho?": o que a busca atual diz sobre posse, independente dos outros filtros.
+  const lookup = useMemo(() => {
+    const q = normalizeName(search);
+    if (q.length < 2) return null;
+    return perfumes.filter((p) => normalizeName(`${p.name} ${p.brand || ""}`).includes(q));
+  }, [perfumes, search]);
+
+  const activeTags = [];
+  if (filterFamily) activeTags.push({ key: "family", label: filterFamily, clear: () => setFilterFamily("") });
+  if (filterStatus) activeTags.push({ key: "status", label: statusFilterLabel(filterStatus), clear: () => setFilterStatus("") });
+  if (filterNote.trim()) activeTags.push({ key: "note", label: `Nota: ${filterNote.trim()}`, clear: () => setFilterNote("") });
+
+  function clearFilters() {
+    setFilterFamily("");
+    setFilterStatus("");
+    setFilterNote("");
+  }
+
+  function clearAll() {
+    clearFilters();
+    setSearch("");
+  }
+
+  function openNew(name, autoSearch) {
+    setModal({ mode: "form", perfume: null, initialName: name || "", autoSearch: Boolean(autoSearch) });
+  }
+
+  function goTab(status) {
+    setFilterStatus(status);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  const currentTab = !filterStatus
+    ? "all"
+    : filterStatus === "possuo" || filterStatus.startsWith("possuo_")
+    ? "possuo"
+    : filterStatus === "desejo" || filterStatus.startsWith("desejo_")
+    ? "desejo"
+    : "other";
+
+  // Navegação entre perfumes dentro do detalhe (segue a lista filtrada/ordenada).
+  const viewIndex =
+    modal && modal.mode === "view" ? filtered.findIndex((p) => p.id === modal.perfume.id) : -1;
+
+  function navigateDetail(delta) {
+    if (viewIndex < 0) return;
+    const next = filtered[viewIndex + delta];
+    if (next) setModal({ mode: "view", perfume: next });
+  }
+
+  useEffect(() => {
+    if (!modal) return;
+    const onKey = (e) => {
+      if (modal.mode !== "view") return;
+      if (e.key === "Escape") {
+        setModal(null);
+        return;
+      }
+      const tag = ((e.target && e.target.tagName) || "").toLowerCase();
+      if (tag === "input" || tag === "textarea" || tag === "select") return;
+      if (e.key === "ArrowLeft") navigateDetail(-1);
+      if (e.key === "ArrowRight") navigateDetail(1);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modal, filtered]);
+
+  useEffect(() => {
+    if (!modal) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [Boolean(modal)]);
+
   async function saveDoc(body) {
     const res = await fetch("/api/perfumes", {
       method: "POST",
@@ -170,13 +338,15 @@ export default function Page() {
       }
       return [...prev, data.perfume];
     });
+    showToast(`"${data.perfume.name}" salvo ✓`);
     return true;
   }
 
-  async function quickUpdateStatus(id, name, status) {
+  async function quickUpdateStatus(id, name, status, { silent } = {}) {
     // Atualização otimista: reflete na tela antes da resposta do servidor,
     // e desfaz se a chamada falhar.
     const prev = perfumes;
+    const before = perfumes.find((p) => p.id === id);
     setPerfumes((list) => list.map((p) => (p.id === id ? { ...p, status } : p)));
     const res = await fetch("/api/perfumes", {
       method: "POST",
@@ -187,6 +357,15 @@ export default function Page() {
       setPerfumes(prev);
       const data = await res.json().catch(() => ({}));
       alert(data.error || "Erro ao atualizar status.");
+      return;
+    }
+    if (!silent) {
+      const info = statusInfo(status);
+      const oldStatus = before ? before.status || null : null;
+      showToast(`${name} → ${info ? info.label : "Não possuo"} ✓`, {
+        label: "Desfazer",
+        onClick: () => quickUpdateStatus(id, name, oldStatus, { silent: true }),
+      });
     }
   }
 
@@ -201,19 +380,13 @@ export default function Page() {
     }
     setPerfumes((prev) => prev.filter((p) => p.id !== id));
     setModal(null);
-
-    clearTimeout(undoTimer.current);
-    setToast(target ? { perfume: target } : null);
     if (target) {
-      undoTimer.current = setTimeout(() => setToast(null), UNDO_WINDOW_MS);
+      showToast(`"${target.name}" excluído.`, { label: "Desfazer", onClick: () => undoDelete(target) });
     }
   }
 
-  async function undoDelete() {
-    if (!toast) return;
-    clearTimeout(undoTimer.current);
-    const { perfume } = toast;
-    setToast(null);
+  async function undoDelete(perfume) {
+    dismissToast();
     const res = await fetch("/api/perfumes", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -226,6 +399,33 @@ export default function Page() {
       alert(data.error || "Não foi possível desfazer a exclusão.");
     }
   }
+
+  // Gestos no celular: deslizar para os lados navega, arrastar a alça para baixo fecha.
+  const touchRef = useRef(null);
+  function onTouchStart(e) {
+    const t = e.touches[0];
+    touchRef.current = { x: t.clientX, y: t.clientY };
+  }
+  function onTouchEnd(e) {
+    const start = touchRef.current;
+    touchRef.current = null;
+    if (!start || !modal || modal.mode !== "view") return;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - start.x;
+    const dy = t.clientY - start.y;
+    if (Math.abs(dx) > 80 && Math.abs(dx) > Math.abs(dy) * 2) navigateDetail(dx < 0 ? 1 : -1);
+  }
+  function onHandleTouchEnd(e) {
+    const start = touchRef.current;
+    if (!start) return;
+    const t = e.changedTouches[0];
+    if (t.clientY - start.y > 70) {
+      touchRef.current = null;
+      setModal(null);
+    }
+  }
+
+  const quotaPct = usage && usage.limit ? Math.min(100, Math.round((usage.count / usage.limit) * 100)) : 0;
 
   return (
     <div className="wrap">
@@ -262,19 +462,28 @@ export default function Page() {
         </div>
       </header>
 
-      <div className="hint">
-        <b>Busca automática:</b> digite o nome no formulário de{" "}
-        <b>+ Novo perfume</b> e clique em <b>Buscar dados</b> — o site consulta a
-        API da Fragella (mais de 74 mil fragrâncias) e preenche marca, ano,
-        pirâmide de notas, acordes e avaliação. Depois é só completar sua nota,
-        as notas que você sentiu e sua impressão pessoal.
+      <div className="info-row">
+        <details className="howto">
+          <summary>Como funciona a busca automática</summary>
+          <p>
+            Em <b>+ Novo</b>, digite o nome e clique em <b>Buscar dados</b>: o site consulta a API da
+            Fragella (mais de 74 mil fragrâncias) e preenche marca, ano, pirâmide de notas, acordes e
+            avaliação. Depois é só completar sua nota, as notas que sentiu e sua impressão.
+          </p>
+        </details>
         {usage && (
-          <>
-            {" "}
-            <span style={{ color: usage.count >= usage.limit ? "var(--danger)" : "var(--gold)", fontWeight: 600 }}>
-              {usage.count}/{usage.limit} buscas usadas este mês.
+          <div
+            className={`quota${usage.count >= usage.limit ? " full" : ""}`}
+            title="Buscas na Fragella usadas neste mês"
+          >
+            <span className="quota-bar">
+              <span style={{ width: `${quotaPct}%` }} />
             </span>
-          </>
+            <span className="num">
+              {usage.count}/{usage.limit}
+            </span>
+            <span>buscas este mês</span>
+          </div>
         )}
       </div>
 
@@ -286,88 +495,257 @@ export default function Page() {
         </div>
       )}
 
-      <div className="controls">
-        <input
-          id="search"
-          className="field-input"
-          type="text"
-          placeholder="Buscar por nome ou marca…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
-        <select className="field-input" value={filterFamily} onChange={(e) => setFilterFamily(e.target.value)}>
-          <option value="">Toda família olfativa</option>
-          {families.map((f) => (
-            <option key={f} value={f}>
-              {f}
-            </option>
-          ))}
-        </select>
-        <select className="field-input" value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
-          <option value="">Qualquer status</option>
-          {STATUS_OPTIONS.map((s) => (
-            <option key={s.value} value={s.value}>
-              {s.icon} {s.label}
-            </option>
-          ))}
-        </select>
-        <input
-          className="field-input"
-          type="text"
-          placeholder="Filtrar por nota (ex: baunilha)"
-          style={{ flex: "0 0 220px" }}
-          value={filterNote}
-          onChange={(e) => setFilterNote(e.target.value)}
-        />
-        <select className="field-input" value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
-          <option value="my_score_desc">Minha nota (maior primeiro)</option>
-          <option value="name_asc">Nome (A–Z)</option>
-          <option value="year_desc">Ano (mais recente)</option>
-          <option value="brand_asc">Marca (A–Z)</option>
-        </select>
-        <button className="btn primary" onClick={() => setModal({ mode: "form", perfume: null })}>
-          + Novo perfume
-        </button>
+      <div className="toolbar">
+        <div className="toolbar-row">
+          <div className="searchbox">
+            <span className="searchbox-icon" aria-hidden="true">
+              🔎
+            </span>
+            <input
+              id="search"
+              className="field-input"
+              type="search"
+              placeholder="Já tenho? Busque por nome ou marca…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+            {search && (
+              <button type="button" className="searchbox-clear" onClick={() => setSearch("")} aria-label="Limpar busca">
+                ✕
+              </button>
+            )}
+          </div>
+          <button
+            type="button"
+            className={`btn filter-btn${filtersOpen ? " on" : ""}`}
+            onClick={() => setFiltersOpen((o) => !o)}
+            aria-expanded={filtersOpen}
+          >
+            ⚙︎ Filtros
+            {activeTags.length > 0 && <span className="count-badge">{activeTags.length}</span>}
+          </button>
+          <label className="sort-wrap">
+            <span className="sort-label">Ordenar</span>
+            <select className="field-input" value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
+              {SORT_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="view-toggle" role="group" aria-label="Modo de exibição">
+            <button type="button" className={view === "grid" ? "on" : ""} onClick={() => changeView("grid")} title="Grade">
+              ▦
+            </button>
+            <button type="button" className={view === "list" ? "on" : ""} onClick={() => changeView("list")} title="Lista compacta">
+              ☰
+            </button>
+          </div>
+          <button className="btn primary add-btn" onClick={() => openNew()}>
+            + Novo
+          </button>
+        </div>
+
+        {filtersOpen && (
+          <div className="filter-panel">
+            <label>
+              Família olfativa
+              <select className="field-input" value={filterFamily} onChange={(e) => setFilterFamily(e.target.value)}>
+                <option value="">Todas</option>
+                {families.map((f) => (
+                  <option key={f} value={f}>
+                    {f}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Status
+              <select className="field-input" value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
+                <option value="">Qualquer status</option>
+                <option value="possuo">Todos que possuo</option>
+                <option value="desejo">Todos que desejo</option>
+                <option value="none">Não possuo</option>
+                {STATUS_OPTIONS.map((s) => (
+                  <option key={s.value} value={s.value}>
+                    {s.icon} {s.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Nota olfativa
+              <input
+                className="field-input"
+                type="text"
+                placeholder="ex: baunilha"
+                value={filterNote}
+                onChange={(e) => setFilterNote(e.target.value)}
+              />
+            </label>
+          </div>
+        )}
+
+        {activeTags.length > 0 && (
+          <div className="active-tags">
+            {activeTags.map((t) => (
+              <button type="button" key={t.key} className="tag-chip" onClick={t.clear} title="Remover filtro">
+                {t.label} <span aria-hidden="true">✕</span>
+              </button>
+            ))}
+            <button type="button" className="link-btn" onClick={clearFilters}>
+              Limpar tudo
+            </button>
+          </div>
+        )}
       </div>
 
+      {lookup && !loading && (
+        <div className={`lookup ${lookup.length === 0 ? "none" : ""}`}>
+          {lookup.length === 0 ? (
+            <>
+              <span>
+                <b>&quot;{search.trim()}&quot;</b> não está na sua coleção.
+              </span>
+              <button type="button" className="btn small" onClick={() => openNew(search.trim())}>
+                + Adicionar
+              </button>
+            </>
+          ) : (
+            <>
+              {lookup.slice(0, 4).map((p) => {
+                const info = statusInfo(p.status);
+                return (
+                  <button
+                    type="button"
+                    key={p.id}
+                    className={`lookup-item ${info ? info.kind : "none"}`}
+                    onClick={() => setModal({ mode: "view", perfume: p })}
+                  >
+                    <b>{p.name}</b>
+                    <span>
+                      {info
+                        ? info.kind === "possuo"
+                          ? `✅ ${info.label}`
+                          : `${info.icon} ${info.label}`
+                        : "Na coleção · não possuo"}
+                    </span>
+                  </button>
+                );
+              })}
+              {lookup.length > 4 && <span className="lookup-more">+{lookup.length - 4} resultados</span>}
+            </>
+          )}
+        </div>
+      )}
+
       {loading ? (
+        <div className={view === "list" ? "list" : "grid"}>
+          {Array.from({ length: 8 }).map((_, i) => (
+            <div key={i} className={view === "list" ? "row-item skeleton" : "card skeleton"} aria-hidden="true">
+              <div className="sk-cover" />
+              <div className="sk-line" />
+              <div className="sk-line short" />
+            </div>
+          ))}
+        </div>
+      ) : perfumes.length === 0 ? (
         <div className="empty-state">
-          <h3 style={{ fontStyle: "italic" }}>Carregando…</h3>
+          <h3 style={{ fontStyle: "italic" }}>Nenhum perfume por aqui ainda</h3>
+          <p>Comece adicionando o primeiro da sua coleção.</p>
+          <button className="btn primary" onClick={() => openNew()}>
+            + Novo perfume
+          </button>
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="empty-state">
+          <h3 style={{ fontStyle: "italic" }}>Nada encontrado</h3>
+          <p>Nenhum perfume bate com a busca e os filtros atuais.</p>
+          <div className="empty-actions">
+            <button className="btn" onClick={clearAll}>
+              Limpar busca e filtros
+            </button>
+            {search.trim() && (
+              <button className="btn primary" onClick={() => openNew(search.trim(), true)}>
+                🔍 Buscar &quot;{search.trim()}&quot; na Fragella
+              </button>
+            )}
+          </div>
+        </div>
+      ) : view === "list" ? (
+        <div className="list">
+          {filtered.map((d, i) => (
+            <PerfumeRow
+              key={d.id}
+              d={d}
+              index={i}
+              onClick={() => setModal({ mode: "view", perfume: d })}
+              onEdit={() => setModal({ mode: "form", perfume: d })}
+              onStatusChange={(status) => quickUpdateStatus(d.id, d.name, status)}
+            />
+          ))}
         </div>
       ) : (
         <div className="grid">
-          {perfumes.length === 0 ? (
-            <div className="empty-state">
-              <h3 style={{ fontStyle: "italic" }}>Nenhum perfume por aqui ainda</h3>
-              <p>Clique em &quot;+ Novo perfume&quot; para começar.</p>
-            </div>
-          ) : filtered.length === 0 ? (
-            <div className="empty-state">
-              <h3 style={{ fontStyle: "italic" }}>Nada encontrado</h3>
-              <p>Ajuste a busca ou os filtros.</p>
-            </div>
-          ) : (
-            filtered.map((d) => (
-              <PerfumeCard
-                key={d.id}
-                d={d}
-                onClick={() => setModal({ mode: "view", perfume: d })}
-                onEdit={() => setModal({ mode: "form", perfume: d })}
-                onStatusChange={(status) => quickUpdateStatus(d.id, d.name, status)}
-              />
-            ))
-          )}
+          {filtered.map((d, i) => (
+            <PerfumeCard
+              key={d.id}
+              d={d}
+              index={i}
+              onClick={() => setModal({ mode: "view", perfume: d })}
+              onEdit={() => setModal({ mode: "form", perfume: d })}
+              onStatusChange={(status) => quickUpdateStatus(d.id, d.name, status)}
+            />
+          ))}
         </div>
       )}
 
       <footer className="note">Seus dados ficam salvos neste site e sincronizam automaticamente.</footer>
 
+      <nav className="bottom-nav" aria-label="Navegação principal">
+        <button type="button" className={currentTab === "all" ? "on" : ""} onClick={() => goTab("")}>
+          <span className="ic">📚</span>
+          <span>Coleção</span>
+        </button>
+        <button type="button" className={currentTab === "possuo" ? "on" : ""} onClick={() => goTab("possuo")}>
+          <span className="ic">🧴</span>
+          <span>Tenho</span>
+        </button>
+        <button type="button" className="fab" onClick={() => openNew()} aria-label="Novo perfume">
+          +
+        </button>
+        <button type="button" className={currentTab === "desejo" ? "on" : ""} onClick={() => goTab("desejo")}>
+          <span className="ic">✨</span>
+          <span>Desejos</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            window.scrollTo({ top: 0, behavior: "smooth" });
+            const el = document.getElementById("search");
+            if (el) el.focus({ preventScroll: true });
+          }}
+        >
+          <span className="ic">🔎</span>
+          <span>Buscar</span>
+        </button>
+      </nav>
+
       {toast && (
-        <div className="toast">
-          <span>&quot;{toast.perfume.name}&quot; excluído.</span>
-          <button className="btn small" onClick={undoDelete}>
-            Desfazer
-          </button>
+        <div className="toast" role="status" key={toast.id}>
+          <span>{toast.message}</span>
+          {toast.action && (
+            <button
+              className="btn small"
+              onClick={() => {
+                dismissToast();
+                toast.action.onClick();
+              }}
+            >
+              {toast.action.label}
+            </button>
+          )}
         </div>
       )}
 
@@ -378,10 +756,25 @@ export default function Page() {
             if (e.target === e.currentTarget) setModal(null);
           }}
         >
-          <div className="modal">
+          <div className="modal" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
+            <div
+              className="sheet-handle"
+              onTouchStart={onTouchStart}
+              onTouchEnd={(e) => {
+                e.stopPropagation();
+                onHandleTouchEnd(e);
+              }}
+              onClick={() => setModal(null)}
+              aria-hidden="true"
+            >
+              <span />
+            </div>
             {modal.mode === "view" ? (
               <DetailView
                 d={modal.perfume}
+                position={viewIndex >= 0 ? { index: viewIndex, total: filtered.length } : null}
+                onPrev={viewIndex > 0 ? () => navigateDetail(-1) : null}
+                onNext={viewIndex >= 0 && viewIndex < filtered.length - 1 ? () => navigateDetail(1) : null}
                 onClose={() => setModal(null)}
                 onEdit={() => setModal({ mode: "form", perfume: modal.perfume })}
                 onRefresh={() => setModal({ mode: "form", perfume: modal.perfume, autoSearch: true })}
@@ -391,6 +784,7 @@ export default function Page() {
               <FormView
                 key={modal.perfume ? modal.perfume.id : "new"}
                 existing={modal.perfume}
+                initialName={modal.initialName}
                 autoSearch={modal.autoSearch}
                 allPerfumes={perfumes}
                 usage={usage}
@@ -432,6 +826,70 @@ function Stat({ v, l, mono, onClick, active }) {
   return <div className="stat">{content}</div>;
 }
 
+function StatusMenu({ value, onChange, showLabel }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  const info = statusInfo(value);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e) => {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    };
+    const onKey = (e) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("pointerdown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  function pick(v) {
+    setOpen(false);
+    if ((v || null) !== (value || null)) onChange(v);
+  }
+
+  return (
+    <div className="status-menu" ref={ref}>
+      <button
+        type="button"
+        className={`status-trigger ${info ? info.kind : "none"}${showLabel ? " with-label" : ""}`}
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen((o) => !o);
+        }}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        title={info ? `${info.label} — clique para alterar` : "Definir status (possuo / desejo)"}
+      >
+        <span className="st-ic">{info ? info.icon : "＋"}</span>
+        {showLabel && <span className="st-lbl">{info ? info.label : "Não possuo"}</span>}
+      </button>
+      {open && (
+        <div className="status-pop" role="menu" onClick={(e) => e.stopPropagation()}>
+          <button type="button" role="menuitem" className={!value ? "cur" : ""} onClick={() => pick(null)}>
+            <span className="st-ic">∅</span> Não possuo
+          </button>
+          {STATUS_OPTIONS.map((s) => (
+            <button
+              type="button"
+              role="menuitem"
+              key={s.value}
+              className={`${s.kind}${value === s.value ? " cur" : ""}`}
+              onClick={() => pick(s.value)}
+            >
+              <span className="st-ic">{s.icon}</span> {s.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function pyramidRow(tag, arr) {
   if (!arr || !arr.length) return null;
   return (
@@ -442,72 +900,109 @@ function pyramidRow(tag, arr) {
   );
 }
 
-function PerfumeCard({ d, onClick, onEdit, onStatusChange }) {
-  const status = statusInfo(d.status);
+function Cover({ d, className }) {
+  return d.imageUrl ? (
+    <div className={`cover has-img ${className || ""}`}>
+      <img src={d.imageUrl} alt="" loading="lazy" />
+    </div>
+  ) : (
+    <div className={`cover fallback ${className || ""}`} style={coverStyle(d)} aria-hidden="true">
+      <span>{coverInitial(d)}</span>
+    </div>
+  );
+}
+
+function AccordPills({ family, max }) {
+  const list = splitList(family).slice(0, max);
+  if (!list.length) return null;
   return (
-    <div className="card">
-      <div className="card-quickbar">
-        <select
-          className={`status-quickselect ${status ? status.kind : ""}`}
-          value={d.status || ""}
-          onClick={(e) => e.stopPropagation()}
-          onChange={(e) => onStatusChange(e.target.value || null)}
-        >
-          <option value="">Não possuo</option>
-          {STATUS_OPTIONS.map((s) => (
-            <option key={s.value} value={s.value}>
-              {s.icon} {s.label}
-            </option>
-          ))}
-        </select>
-        <button
-          type="button"
-          className="card-edit-btn"
-          title="Editar perfume"
-          onClick={(e) => {
-            e.stopPropagation();
-            onEdit();
-          }}
-        >
-          ✏️
-        </button>
-      </div>
+    <div className="pill-row">
+      {list.map((a, i) => (
+        <span key={a} className={`pill${i === 0 ? " family" : ""}`}>
+          {a}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function ScoreBadge({ score, small }) {
+  return typeof score === "number" ? (
+    <div className={`score-badge${small ? " sm" : ""}`}>{score.toFixed(1)}</div>
+  ) : (
+    <div className={`score-badge empty${small ? " sm" : ""}`}>?</div>
+  );
+}
+
+function PerfumeCard({ d, index, onClick, onEdit, onStatusChange }) {
+  const notesLine = [...(d.top || []), ...(d.heart || []), ...(d.base || [])].slice(0, 6).join(" · ");
+  return (
+    <div className="card" style={{ animationDelay: `${Math.min(index, 12) * 28}ms` }}>
       <button className="card-body" onClick={onClick}>
-        <div className="card-top">
-          {d.imageUrl ? (
-            <img src={d.imageUrl} alt="" className="card-thumb" />
-          ) : (
-            <div className="card-thumb placeholder" aria-hidden="true">
-              ⚱
-            </div>
-          )}
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <h3>{d.name}</h3>
-            <div className="brand">
-              {d.brand || ""}
-              {d.year ? ` · ${d.year}` : ""}
-            </div>
+        <Cover d={d} />
+        <div className="card-info">
+          <h3>{d.name}</h3>
+          <div className="brand">
+            {d.brand || ""}
+            {d.year ? ` · ${d.year}` : ""}
           </div>
-          {typeof d.myScore === "number" ? (
-            <div className="score-badge">{d.myScore.toFixed(1)}</div>
+          <AccordPills family={d.family} max={3} />
+          {d.myImpression ? (
+            <div className="impression">&quot;{d.myImpression}&quot;</div>
           ) : (
-            <div className="score-badge empty">?</div>
+            notesLine && <div className="notes-line">{notesLine}</div>
           )}
         </div>
-        <div className="pill-row">
-          {d.family && <span className="pill family">{d.family}</span>}
-          {typeof d.externalRating === "number" && (
-            <span className="pill ext">
-              {d.externalSource || "Externa"} {d.externalRating.toFixed(1)}
-            </span>
-          )}
+      </button>
+      <div className="card-float tl">
+        <StatusMenu value={d.status} onChange={onStatusChange} />
+      </div>
+      <div className="card-float tr">
+        <ScoreBadge score={d.myScore} />
+      </div>
+      <button
+        type="button"
+        className="card-edit-btn"
+        title="Editar perfume"
+        onClick={(e) => {
+          e.stopPropagation();
+          onEdit();
+        }}
+      >
+        ✏️
+      </button>
+    </div>
+  );
+}
+
+function PerfumeRow({ d, index, onClick, onEdit, onStatusChange }) {
+  return (
+    <div className="row-item" style={{ animationDelay: `${Math.min(index, 12) * 20}ms` }}>
+      <button className="row-main" onClick={onClick}>
+        <Cover d={d} className="sm" />
+        <div className="row-text">
+          <h3>{d.name}</h3>
+          <div className="brand">
+            {d.brand || ""}
+            {d.year ? ` · ${d.year}` : ""}
+          </div>
         </div>
-        <div className="pyramid">
-          {pyramidRow("Topo", d.top)}
-          {pyramidRow("Coração", d.heart)}
-          {pyramidRow("Fundo", d.base)}
+        <div className="row-pills">
+          <AccordPills family={d.family} max={2} />
         </div>
-        {d.myImpression && <div className="impression">&quot;{d.myImpression}&quot;</div>}
+      </button>
+      <StatusMenu value={d.status} onChange={onStatusChange} showLabel />
+      <ScoreBadge score={d.myScore} small />
+      <button
+        type="button"
+        className="row-edit"
+        title="Editar perfume"
+        onClick={(e) => {
+          e.stopPropagation();
+          onEdit();
+        }}
+      >
+        ✏️
       </button>
     </div>
   );
@@ -529,12 +1024,21 @@ function LabeledChips(label, arr) {
   );
 }
 
-function DetailView({ d, onClose, onEdit, onRefresh, onDelete }) {
+function DetailView({ d, position, onPrev, onNext, onClose, onEdit, onRefresh, onDelete }) {
   const hasPyramid = (d.top && d.top.length) || (d.heart && d.heart.length) || (d.base && d.base.length);
   const hasExtras = d.volume || (d.climate && d.climate.length) || (d.occasion && d.occasion.length) || d.alerts;
   const status = statusInfo(d.status);
   return (
     <div>
+      <div className="detail-nav">
+        <button type="button" className="nav-arrow" onClick={onPrev || undefined} disabled={!onPrev} title="Anterior (←)">
+          ‹
+        </button>
+        <span className="nav-pos num">{position ? `${position.index + 1} / ${position.total}` : ""}</span>
+        <button type="button" className="nav-arrow" onClick={onNext || undefined} disabled={!onNext} title="Próximo (→)">
+          ›
+        </button>
+      </div>
       <div className="modal-head">
         <div>
           <h2>{d.name}</h2>
@@ -676,9 +1180,9 @@ function DetailView({ d, onClose, onEdit, onRefresh, onDelete }) {
   );
 }
 
-function FormView({ existing, autoSearch, allPerfumes, onClose, onSave, onSwitchExisting, onDelete, usage, onUsage }) {
+function FormView({ existing, initialName, autoSearch, allPerfumes, onClose, onSave, onSwitchExisting, onDelete, usage, onUsage }) {
   const d = existing || {};
-  const [name, setName] = useState(d.name || "");
+  const [name, setName] = useState(d.name || initialName || "");
   const [brand, setBrand] = useState(d.brand || "");
   const [perfumer, setPerfumer] = useState(d.perfumer || "");
   const [year, setYear] = useState(d.year || "");

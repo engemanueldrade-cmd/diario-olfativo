@@ -1,4 +1,5 @@
 import "./globals.css";
+import "./ui.css";
 
 export const metadata = {
   title: "Diário Olfativo",
