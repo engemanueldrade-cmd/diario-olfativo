@@ -1,16 +1,19 @@
 name: Supabase Keep-Alive (todos os projetos)
 
-# Faz um ping diário real no banco de cada projeto pra evitar que o Supabase
-# pause os projetos no plano gratuito por 7 dias sem atividade. Centralizado
-# aqui porque este é o único repositório no GitHub entre os 4 apps — os
-# outros 3 não têm repositório próprio.
+# Faz um ping real no banco de cada projeto pra evitar que o Supabase pause os
+# projetos no plano gratuito por falta de atividade. Centralizado aqui porque
+# este é o único repositório no GitHub entre os 4 apps — os outros 3 não têm
+# repositório próprio.
+#
+# O job só passa se cada endpoint responder "ok":true (ou seja, se o Supabase
+# respondeu de verdade), não apenas se o site da Vercel respondeu.
 #
 # Verificação: aba "Actions" deste repo, ou via API pública:
 # https://api.github.com/repos/engemanueldrade-cmd/diario-olfativo/actions/workflows/supabase-keepalive.yml/runs
 
 on:
   schedule:
-    - cron: "0 6 * * *" # 06:00 UTC todo dia
+    - cron: "0 */6 * * *" # a cada 6 horas
   workflow_dispatch: {} # permite rodar manualmente pela aba Actions
 
 jobs:
@@ -22,8 +25,10 @@ jobs:
           status=0
           ping() {
             echo "== $1 =="
-            if curl -sf --max-time 20 "$1"; then
-              echo
+            body=$(curl -s --max-time 25 "$1")
+            echo "$body"
+            if echo "$body" | grep -q '"ok":true'; then
+              :
             else
               echo "FALHOU"
               status=1
